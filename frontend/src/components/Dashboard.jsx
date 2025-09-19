@@ -23,6 +23,9 @@ export default function Dashboard({ onModelsUpdate }) {
   const [isDetectingHand, setIsDetectingHand] = useState(false);
   const [status, setStatus] = useState("Esperando detección...");
 
+  const API_URL = process.env.REACT_APP_API_URL;
+
+
   // Limpiar mensajes después de un tiempo
   useEffect(() => {
     if (error || success) {
