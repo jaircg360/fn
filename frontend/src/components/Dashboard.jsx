@@ -43,7 +43,7 @@ export default function Dashboard({ onModelsUpdate }) {
         const canvasCtx = canvasElement.getContext('2d');
 
         const hands = new mpHands.Hands({
-          locateFile: (file) => https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
         });
         
         hands.setOptions({
@@ -303,7 +303,7 @@ export default function Dashboard({ onModelsUpdate }) {
             <ul className="nav nav-tabs mb-3">
               <li className="nav-item">
                 <button 
-                  className={nav-link ${activeTab === 'capture' ? 'active' : ''}}
+                  className={`nav-link ${activeTab === 'capture' ? 'active' : ''}`}
                   onClick={() => setActiveTab('capture')}
                 >
                   <i className="fas fa-camera me-2"></i>Captura
@@ -311,7 +311,7 @@ export default function Dashboard({ onModelsUpdate }) {
               </li>
               <li className="nav-item">
                 <button 
-                  className={nav-link ${activeTab === 'training' ? 'active' : ''}}
+                  className={`nav-link ${activeTab === 'training' ? 'active' : ''}`}
                   onClick={() => setActiveTab('training')}
                 >
                   <i className="fas fa-brain me-2"></i>Entrenamiento
@@ -319,7 +319,7 @@ export default function Dashboard({ onModelsUpdate }) {
               </li>
               <li className="nav-item">
                 <button 
-                  className={nav-link ${activeTab === 'prediction' ? 'active' : ''}}
+                  className={`nav-link ${activeTab === 'prediction' ? 'active' : ''}`}
                   onClick={() => setActiveTab('prediction')}
                 >
                   <i className="fas fa-search me-2"></i>Predicción
@@ -358,7 +358,7 @@ export default function Dashboard({ onModelsUpdate }) {
                         {['A', 'E', 'I', 'O', 'U'].map(vowel => (
                           <button
                             key={vowel}
-                            className={vowel-btn ${label === vowel ? 'active' : ''}}
+                            className={`vowel-btn ${label === vowel ? 'active' : ''}`}
                             onClick={() => setLabel(vowel)}
                           >
                             {vowel}
@@ -401,8 +401,8 @@ export default function Dashboard({ onModelsUpdate }) {
                                 <div 
                                   className="progress-bar" 
                                   style={{ 
-                                    width: ${(count / samplesInfo.total_samples) * 100}%,
-                                    backgroundColor: hsl(${label.charCodeAt(0) * 10}, 70%, 50%)
+                                    width: `${(count / samplesInfo.total_samples) * 100}%`,
+                                    backgroundColor: `hsl(${label.charCodeAt(0) * 10}, 70%, 50%)`
                                   }}
                                 ></div>
                               </div>
@@ -529,7 +529,7 @@ export default function Dashboard({ onModelsUpdate }) {
                                 <div className="alt-probability">
                                   <div 
                                     className="alt-probability-bar"
-                                    style={{ width: ${prob * 100}% }}
+                                    style={{ width: `${prob * 100}%` }}
                                   ></div>
                                   <span className="alt-percentage">{(prob * 100).toFixed(1)}%</span>
                                 </div>
