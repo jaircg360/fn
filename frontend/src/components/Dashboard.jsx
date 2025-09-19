@@ -23,212 +23,241 @@ export default function Dashboard({ onModelsUpdate }) {
   const [isDetectingHand, setIsDetectingHand] = useState(false);
   const [status, setStatus] = useState("Esperando detección...");
 
-  const API_URL = process.env.REACT_APP_API_URL;
-
+  // Limpiar mensajes después de un tiempo
   useEffect(() => {
+    if (error || success) {
+      const timer = setTimeout(() => {
+        setError(null);
+        setSuccess(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [error, success]);
+
+  // Inicializar MediaPipe Hands y cámara
+  useEffect(() => {
+    const initializeMediaPipe = async () => {
+      try {
+        const videoElement = videoRef.current;
+        const canvasElement = canvasRef.current;
+        const canvasCtx = canvasElement.getContext('2d');
+
+        const hands = new mpHands.Hands({
+          locateFile: (file) => https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}
+        });
+        
+        hands.setOptions({
+          maxNumHands: 1,
+          modelComplexity: 1,
+          minDetectionConfidence: 0.7,
+          minTrackingConfidence: 0.7
+        });
+
+        hands.onResults((results) => {
+          canvasCtx.save();
+          canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+          canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+          // Verificar si se detecta una mano
+          const handDetected = results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
+          setIsDetectingHand(handDetected);
+          
+          if (handDetected) {
+            setStatus("✋ Mano detectada");
+            for (const landmarks of results.multiHandLandmarks) {
+              drawConnectors(canvasCtx, landmarks, mpHands.HAND_CONNECTIONS, 
+                { color: '#00FF00', lineWidth: 2 });
+              drawLandmarks(canvasCtx, landmarks, 
+                { color: '#FF0000', radius: 3 });
+            }
+          } else {
+            setStatus("❌ No se detecta mano");
+            // Dibujar mensaje cuando no se detecta mano
+            canvasCtx.font = '16px Arial';
+            canvasCtx.fillStyle = 'white';
+            canvasCtx.textAlign = 'center';
+            canvasCtx.fillText('Mueve tu mano frente a la cámara', canvasElement.width / 2, canvasElement.height / 2);
+          }
+          
+          canvasCtx.restore();
+        });
+
+        const camera = new Camera(videoElement, {
+          onFrame: async () => {
+            await hands.send({ image: videoElement });
+          },
+          width: 640,
+          height: 480
+        });
+        
+        await camera.start();
+        
+        // Establecer tamaño del canvas para que coincida con el video
+        canvasElement.width = 640;
+        canvasElement.height = 480;
+
+        // Crear canvas oculto para captura
+        const cap = captureCanvasRef.current;
+        cap.width = 640;
+        cap.height = 480;
+
+        return () => {
+          camera.stop();
+        };
+      } catch (err) {
+        console.error('Error initializing MediaPipe:', err);
+        setError('Error al inicializar la cámara: ' + err.message);
+      }
+    };
+
+    initializeMediaPipe();
     fetchSamplesInfo();
-    fetchModels();
   }, []);
 
-  const fetchSamplesInfo = async () => {
-    try {
-      const res = await axios.get(`${API_URL}/api/samples`);
-      setSamplesInfo(res.data);
-    } catch (err) {
-      console.error("Error al obtener muestras:", err);
-    }
-  };
-
-  const fetchModels = async () => {
-    try {
-      const res = await axios.get(`${API_URL}/api/models`);
-      setModels(res.data.models || []);
-      if (onModelsUpdate) {
-        onModelsUpdate(res.data.models || []);
-      }
-    } catch (err) {
-      console.error("Error al obtener modelos:", err);
-    }
-  };
-
+  // Capturar muestra
   const captureSample = async () => {
-    if (!captureCanvasRef.current) return;
-    const canvas = captureCanvasRef.current;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob(async (blob) => {
-      const fd = new FormData();
-      fd.append('file', blob, 'sample.png');
-      fd.append('label', label);
-      try {
-        const res = await axios.post(`${API_URL}/api/upload_sample`, fd, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        });
-        setSuccess("Muestra capturada exitosamente.");
-        fetchSamplesInfo();
-      } catch (err) {
-        setError("Error al capturar muestra.");
-      }
-    }, 'image/png');
-  };
-
-  const clearSamples = async () => {
-    try {
-      await axios.delete(`${API_URL}/api/clear_samples`);
-      setSamplesInfo({});
-      setSuccess("Muestras eliminadas.");
-    } catch (err) {
-      setError("Error al eliminar muestras.");
+    if (!isDetectingHand) {
+      setError('No se detecta una mano. Por favor, coloca tu mano frente a la cámara.');
+      return;
     }
-  };
-
-  const trainModel = async () => {
+    
     setIsLoading(true);
+    setError(null);
+    
     try {
-      const res = await axios.post(`${API_URL}/api/train`, { model_name: modelName });
-      setSuccess(`Modelo ${res.data.model_name} entrenado exitosamente.`);
-      fetchModels();
+      const cap = captureCanvasRef.current;
+      const ctx = cap.getContext('2d');
+      ctx.drawImage(videoRef.current, 0, 0, cap.width, cap.height);
+      const blob = await new Promise(res => cap.toBlob(res, 'image/jpeg', 0.9));
+
+      const fd = new FormData();
+      fd.append('label', label);
+      fd.append('file', blob, 'frame.jpg');
+
+      const res = await axios.post('https://backend-fastapi-3yov.onrender.com/api/upload_sample', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      
+      setSuccess(res.data.message);
+      fetchSamplesInfo();
+      
+      // Efecto visual de captura exitosa
+      document.querySelector('.camera-container').classList.add('capture-flash');
+      setTimeout(() => {
+        document.querySelector('.camera-container').classList.remove('capture-flash');
+      }, 300);
     } catch (err) {
-      setError("Error al entrenar modelo.");
+      const errorMsg = err.response?.data?.detail || err.message;
+      console.error('Capture error:', errorMsg);
+      setError('Error al capturar muestra: ' + errorMsg);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const startPrediction = useCallback(() => {
-    if (!videoRef.current) return;
-
-    const hands = new mpHands.Hands({
-      locateFile: (file) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-    });
-    hands.setOptions({
-      maxNumHands: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7
-    });
-
-    hands.onResults(async (results) => {
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
-      ctx.save();
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-
-      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        setIsDetectingHand(true);
-        setStatus("Mano detectada");
-
-        for (const landmarks of results.multiHandLandmarks) {
-          drawConnectors(ctx, landmarks, mpHands.HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
-          drawLandmarks(ctx, landmarks, { color: '#FF0000', lineWidth: 1 });
-        }
-
-        try {
-          const canvasPred = captureCanvasRef.current;
-          const ctxPred = canvasPred.getContext('2d');
-          ctxPred.drawImage(results.image, 0, 0, canvasPred.width, canvasPred.height);
-          canvasPred.toBlob(async (blob) => {
-            const fd = new FormData();
-            fd.append('file', blob, 'frame.png');
-            fd.append('model_name', modelName);
-            const res = await axios.post(`${API_URL}/api/predict`, fd, {
-              headers: { 'Content-Type': 'multipart/form-data' }
-            });
-            setPrediction(res.data.prediction);
-            setConfidence(res.data.confidence);
-            setAllPredictions(res.data.all_predictions || []);
-          }, 'image/png');
-        } catch (err) {
-          console.error("Error al predecir:", err);
-        }
-
-      } else {
-        setIsDetectingHand(false);
-        setStatus("Esperando detección...");
-      }
-      ctx.restore();
-    });
-
-    const camera = new Camera(videoRef.current, {
-      onFrame: async () => {
-        await hands.send({ image: videoRef.current });
-      },
-      width: 640,
-      height: 480
-    });
-    camera.start();
-  }, [modelName, API_URL]);
-
-  useEffect(() => {
-    if (activeTab === 'predict') {
-      startPrediction();
+  // Obtener información de muestras
+  const fetchSamplesInfo = async () => {
+    try {
+      const res = await axios.get('https://backend-fastapi-3yov.onrender.com/api/samples');
+      setSamplesInfo(res.data);
+    } catch (err) {
+      console.error('Error fetching samples info:', err);
     }
-  }, [activeTab, startPrediction]);
+  };
 
-  return (
-    <div className="dashboard">
-      <div className="tabs">
-        <button onClick={() => setActiveTab('capture')}>Captura</button>
-        <button onClick={() => setActiveTab('train')}>Entrenar</button>
-        <button onClick={() => setActiveTab('predict')}>Predecir</button>
-      </div>
+  // Limpiar muestras
+  const clearSamples = async () => {
+    if (!window.confirm('¿Estás seguro de que quieres eliminar todas las muestras?')) {
+      return;
+    }
+    
+    try {
+      const res = await axios.delete('https://backend-fastapi-3yov.onrender.com/api/clear_samples');
+      setSamplesInfo({});
+      setSuccess(res.data.message);
+    } catch (err) {
+      const errorMsg = err.response?.data?.detail || err.message;
+      console.error('Clear samples error:', errorMsg);
+      setError('Error al limpiar muestras: ' + errorMsg);
+    }
+  };
 
-      {error && <div className="error">{error}</div>}
-      {success && <div className="success">{success}</div>}
+  // Entrenar modelo
+  const trainModel = async () => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const fd = new FormData();
+      fd.append('name', modelName);
+      
+      const res = await axios.post('https://backend-fastapi-3yov.onrender.com/api/train', fd);
+      setSuccess(res.data.message);
+      if (onModelsUpdate) onModelsUpdate();
+      fetchModels();
+    } catch (err) {
+      const errorMsg = err.response?.data?.detail || err.message;
+      console.error('Training error:', errorMsg);
+      setError('Error en entrenamiento: ' + errorMsg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-      {activeTab === 'capture' && (
-        <div className="capture-section">
-          <video ref={videoRef} autoPlay playsInline></video>
-          <canvas ref={captureCanvasRef} width="224" height="224" style={{ display: 'none' }} />
-          <div>
-            <label>Etiqueta:</label>
-            <input value={label} onChange={(e) => setLabel(e.target.value)} />
-            <button onClick={captureSample}>Capturar</button>
-            <button onClick={clearSamples}>Eliminar muestras</button>
-          </div>
-          <div>
-            <h3>Muestras por etiqueta:</h3>
-            <pre>{JSON.stringify(samplesInfo, null, 2)}</pre>
-          </div>
-        </div>
-      )}
+  // Obtener modelos
+  const fetchModels = useCallback(async () => {
+    try {
+      const res = await axios.get('https://backend-fastapi-3yov.onrender.com/api/models');
+      setModels(res.data.models || []);
+    } catch (err) {
+      console.error('Error fetching models:', err);
+      setError('Error al cargar modelos: ' + err.message);
+    }
+  }, []);
 
-      {activeTab === 'train' && (
-        <div className="train-section">
-          <input value={modelName} onChange={(e) => setModelName(e.target.value)} />
-          <button onClick={trainModel} disabled={isLoading}>
-            {isLoading ? "Entrenando..." : "Entrenar modelo"}
-          </button>
-          <div>
-            <h3>Modelos disponibles:</h3>
-            <ul>
-              {models.map((m, idx) => (
-                <li key={idx}>{m}</li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      )}
+  // Cargar modelos al montar el componente
+  useEffect(() => {
+    fetchModels();
+  }, [fetchModels]);
 
-      {activeTab === 'predict' && (
-        <div className="predict-section">
-          <video ref={videoRef} autoPlay playsInline style={{ display: 'none' }}></video>
-          <canvas ref={canvasRef} width="640" height="480"></canvas>
-          <div className="status">{status}</div>
-          {prediction && (
-            <div>
-              <h3>Predicción: {prediction}</h3>
-              <p>Confianza: {(confidence * 100).toFixed(2)}%</p>
-              <h4>Todas las predicciones:</h4>
-              <pre>{JSON.stringify(allPredictions, null, 2)}</pre>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
+  // Predecir con un modelo
+  const predict = async (model) => {
+    if (!isDetectingHand) {
+      setError('No se detecta una mano. Por favor, coloca tu mano frente a la cámara.');
+      return;
+    }
+    
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const cap = captureCanvasRef.current;
+      const ctx = cap.getContext('2d');
+      ctx.drawImage(videoRef.current, 0, 0, cap.width, cap.height);
+      const blob = await new Promise(res => cap.toBlob(res, 'image/jpeg', 0.9));
+
+      const fd = new FormData();
+      fd.append('file', blob, 'frame.jpg');
+      fd.append('model', model);
+
+      const res = await axios.post('https://backend-fastapi-3yov.onrender.com/api/predict', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      
+      setPrediction(res.data.prediction);
+      setConfidence(res.data.confidence);
+      setAllPredictions(res.data.all_predictions);
+      setSuccess(res.data.message);
+      setActiveTab('prediction');
+    } catch (err) {
+      const errorMsg = err.response?.data?.detail || err.message;
+      console.error('Prediction error:', errorMsg);
+      setError('Error en predicción: ' + errorMsg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="dashboard-container">
@@ -274,7 +303,7 @@ export default function Dashboard({ onModelsUpdate }) {
             <ul className="nav nav-tabs mb-3">
               <li className="nav-item">
                 <button 
-                  className={`nav-link ${activeTab === 'capture' ? 'active' : ''}`}
+                  className={nav-link ${activeTab === 'capture' ? 'active' : ''}}
                   onClick={() => setActiveTab('capture')}
                 >
                   <i className="fas fa-camera me-2"></i>Captura
@@ -282,7 +311,7 @@ export default function Dashboard({ onModelsUpdate }) {
               </li>
               <li className="nav-item">
                 <button 
-                  className={`nav-link ${activeTab === 'training' ? 'active' : ''}`}
+                  className={nav-link ${activeTab === 'training' ? 'active' : ''}}
                   onClick={() => setActiveTab('training')}
                 >
                   <i className="fas fa-brain me-2"></i>Entrenamiento
@@ -290,7 +319,7 @@ export default function Dashboard({ onModelsUpdate }) {
               </li>
               <li className="nav-item">
                 <button 
-                  className={`nav-link ${activeTab === 'prediction' ? 'active' : ''}`}
+                  className={nav-link ${activeTab === 'prediction' ? 'active' : ''}}
                   onClick={() => setActiveTab('prediction')}
                 >
                   <i className="fas fa-search me-2"></i>Predicción
@@ -329,7 +358,7 @@ export default function Dashboard({ onModelsUpdate }) {
                         {['A', 'E', 'I', 'O', 'U'].map(vowel => (
                           <button
                             key={vowel}
-                            className={`vowel-btn ${label === vowel ? 'active' : ''}`}
+                            className={vowel-btn ${label === vowel ? 'active' : ''}}
                             onClick={() => setLabel(vowel)}
                           >
                             {vowel}
@@ -372,8 +401,8 @@ export default function Dashboard({ onModelsUpdate }) {
                                 <div 
                                   className="progress-bar" 
                                   style={{ 
-                                    width: `${(count / samplesInfo.total_samples) * 100}%`,
-                                    backgroundColor: `hsl(${label.charCodeAt(0) * 10}, 70%, 50%)`
+                                    width: ${(count / samplesInfo.total_samples) * 100}%,
+                                    backgroundColor: hsl(${label.charCodeAt(0) * 10}, 70%, 50%)
                                   }}
                                 ></div>
                               </div>
@@ -500,7 +529,7 @@ export default function Dashboard({ onModelsUpdate }) {
                                 <div className="alt-probability">
                                   <div 
                                     className="alt-probability-bar"
-                                    style={{ width: `${prob * 100}%` }}
+                                    style={{ width: ${prob * 100}% }}
                                   ></div>
                                   <span className="alt-percentage">{(prob * 100).toFixed(1)}%</span>
                                 </div>
