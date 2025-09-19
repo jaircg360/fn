@@ -1,0 +1,3 @@
+:root{ --bg:#f4f6f8 }
+body{ background:var(--bg); font-family: Inter, Arial, sans-serif; }
+.container-app{ max-width: 1000px; margin: 28px auto; }

@@ -1,0 +1,94 @@
+.dark-dashboard {
+  background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+  min-height: 100vh;
+  color: #fff;
+  padding: 20px;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Tipografía y títulos */
+.typing-title {
+  font-size: 2.5rem;
+  font-weight: 700;
+  background: linear-gradient(90deg, #ff8a00, #e52e71);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 10px;
+}
+
+.header-subtitle {
+  color: #a0a0d0;
+  font-size: 1.1rem;
+}
+
+/* Botones generales */
+.vowel-btn {
+  flex: 1;
+  padding: 12px;
+  border: 2px solid #444;
+  background: #222;
+  color: #fff;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+  font-weight: bold;
+  font-size: 1.2rem;
+}
+
+.vowel-btn:hover {
+  background: #333;
+  border-color: #666;
+}
+
+.vowel-btn.active {
+  background: linear-gradient(90deg, #ff8a00, #e52e71);
+  border-color: transparent;
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(255, 138, 0, 0.3);
+}
+
+.capture-btn, .train-btn {
+  padding: 12px;
+  font-weight: bold;
+  border: none;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.capture-btn {
+  background: linear-gradient(90deg, #ff8a00, #e52e71);
+}
+
+.capture-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(255, 138, 0, 0.4);
+}
+
+.train-btn {
+  background: linear-gradient(90deg, #00c6ff, #0072ff);
+}
+
+.train-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(0, 114, 255, 0.4);
+}
+
+/* Responsive */
+@media (max-width: 992px) {
+  .typing-title {
+    font-size: 2rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .dark-dashboard {
+    padding: 10px;
+  }
+
+  .vowel-buttons {
+    flex-wrap: wrap;
+  }
+
+  .vowel-btn {
+    flex: 1 0 21%;
+  }
+}
