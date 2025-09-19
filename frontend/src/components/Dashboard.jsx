@@ -43,7 +43,7 @@ export default function Dashboard({ onModelsUpdate }) {
         const canvasCtx = canvasElement.getContext('2d');
 
         const hands = new mpHands.Hands({
-          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
         });
         
         hands.setOptions({
