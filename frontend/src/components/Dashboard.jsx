@@ -9,9 +9,10 @@ export default function Dashboard({ onModelsUpdate }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const captureCanvasRef = useRef(null);
+  const [currentCategory, setCurrentCategory] = useState('vocales');
   const [label, setLabel] = useState('A');
   const [samplesInfo, setSamplesInfo] = useState({});
-  const [modelName, setModelName] = useState('vowels_v1');
+  const [modelName, setModelName] = useState('lenguaje_senas_v1');
   const [models, setModels] = useState([]);
   const [prediction, setPrediction] = useState(null);
   const [confidence, setConfidence] = useState(0);
@@ -22,6 +23,48 @@ export default function Dashboard({ onModelsUpdate }) {
   const [activeTab, setActiveTab] = useState('capture');
   const [isDetectingHand, setIsDetectingHand] = useState(false);
   const [status, setStatus] = useState("Esperando detección...");
+  const [handsDetected, setHandsDetected] = useState(0);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isMediaPipeInitialized, setIsMediaPipeInitialized] = useState(false);
+  
+  // NUEVOS ESTADOS PARA GRABACIÓN
+  const [isRecording, setIsRecording] = useState(false);
+  const [capturesCount, setCapturesCount] = useState(0);
+  const [recordingLabel, setRecordingLabel] = useState('A');
+  const [recordingInterval, setRecordingInterval] = useState(1000); // ms entre capturas
+  const recordingIntervalRef = useRef(null);
+  const capturesQueueRef = useRef([]);
+  const [isProcessingQueue, setIsProcessingQueue] = useState(false);
+
+  const handsRef = useRef(null);
+
+  // Definición de categorías y símbolos
+  const categories = {
+    vocales: {
+      name: 'Vocales',
+      symbols: ['A', 'E', 'I', 'O', 'U'],
+      icon: '🔤',
+      color: '#3B82F6'
+    },
+    abecedario: {
+      name: 'Abecedario',
+      symbols: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split(''),
+      icon: '🔡',
+      color: '#10B981'
+    },
+    numeros: {
+      name: 'Números',
+      symbols: '0123456789'.split(''),
+      icon: '🔢',
+      color: '#F59E0B'
+    },
+    operaciones: {
+      name: 'Operaciones',
+      symbols: ['+', '-', '×', '÷', '=', '%'],
+      icon: '➕',
+      color: '#EF4444'
+    }
+  };
 
   // Limpiar mensajes después de un tiempo
   useEffect(() => {
@@ -34,73 +77,149 @@ export default function Dashboard({ onModelsUpdate }) {
     }
   }, [error, success]);
 
+  // Limpiar intervalo al desmontar
+  useEffect(() => {
+    return () => {
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
+      }
+    };
+  }, []);
+
+  // Procesar cola de capturas
+  useEffect(() => {
+    const processQueue = async () => {
+      if (capturesQueueRef.current.length > 0 && !isProcessingQueue) {
+        setIsProcessingQueue(true);
+        const captureData = capturesQueueRef.current.shift();
+        
+        try {
+          await uploadCapture(captureData.blob, captureData.label);
+        } catch (error) {
+          console.error('Error procesando captura:', error);
+        } finally {
+          setIsProcessingQueue(false);
+        }
+      }
+    };
+
+    processQueue();
+  }, [capturesQueueRef.current.length, isProcessingQueue]);
+
   // Inicializar MediaPipe Hands y cámara
   useEffect(() => {
     const initializeMediaPipe = async () => {
       try {
         const videoElement = videoRef.current;
         const canvasElement = canvasRef.current;
+        const captureCanvasElement = captureCanvasRef.current;
+
+        if (!videoElement || !canvasElement || !captureCanvasElement) {
+          console.error('Elementos de video/canvas no encontrados');
+          setError('Error: Elementos de cámara no disponibles');
+          return;
+        }
+
         const canvasCtx = canvasElement.getContext('2d');
+        if (!canvasCtx) {
+          console.error('No se pudo obtener el contexto del canvas');
+          setError('Error: Contexto de canvas no disponible');
+          return;
+        }
 
         const hands = new mpHands.Hands({
-          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
         });
         
         hands.setOptions({
-          maxNumHands: 1,
+          maxNumHands: 2,
           modelComplexity: 1,
           minDetectionConfidence: 0.7,
           minTrackingConfidence: 0.7
         });
 
         hands.onResults((results) => {
+          if (!canvasElement || !canvasCtx) return;
+
           canvasCtx.save();
           canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-          canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-
-          // Verificar si se detecta una mano
-          const handDetected = results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
-          setIsDetectingHand(handDetected);
           
-          if (handDetected) {
-            setStatus("✋ Mano detectada");
+          if (results.image) {
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+          }
+
+          const handsDetected = results.multiHandLandmarks && results.multiHandLandmarks.length;
+          setHandsDetected(handsDetected);
+          setIsDetectingHand(handsDetected > 0);
+          
+          if (handsDetected > 0) {
+            setStatus(`${handsDetected} ${handsDetected === 1 ? 'mano' : 'manos'} detectada${handsDetected === 1 ? '' : 's'}`);
+            
             for (const landmarks of results.multiHandLandmarks) {
               drawConnectors(canvasCtx, landmarks, mpHands.HAND_CONNECTIONS, 
-                { color: '#00FF00', lineWidth: 2 });
+                { color: '#2563EB', lineWidth: 3 });
               drawLandmarks(canvasCtx, landmarks, 
-                { color: '#FF0000', radius: 3 });
+                { color: '#DC2626', radius: 4 });
+            }
+            
+            // Mostrar contador de grabación si está activa
+            if (isRecording) {
+              canvasCtx.font = 'bold 20px Inter, sans-serif';
+              canvasCtx.fillStyle = '#DC2626';
+              canvasCtx.textAlign = 'center';
+              canvasCtx.fillText(`🔴 GRABANDO: ${capturesCount} capturas`, canvasElement.width / 2, 40);
+            }
+            
+            canvasCtx.font = '16px Inter, sans-serif';
+            canvasCtx.fillStyle = '#1F2937';
+            canvasCtx.textAlign = 'left';
+            canvasCtx.fillText(`Manos detectadas: ${handsDetected}`, 15, isRecording ? 70 : 30);
+            
+            if (results.multiHandedness) {
+              results.multiHandedness.forEach((handedness, index) => {
+                const label = handedness.label;
+                const score = handedness.score;
+                canvasCtx.fillText(`${label} (${(score * 100).toFixed(1)}%)`, 15, (isRecording ? 95 : 55) + (index * 25));
+              });
             }
           } else {
-            setStatus("❌ No se detecta mano");
-            // Dibujar mensaje cuando no se detecta mano
-            canvasCtx.font = '16px Arial';
-            canvasCtx.fillStyle = 'white';
+            setStatus("No se detectan manos");
+            canvasCtx.font = '18px Inter, sans-serif';
+            canvasCtx.fillStyle = '#6B7280';
             canvasCtx.textAlign = 'center';
-            canvasCtx.fillText('Mueve tu mano frente a la cámara', canvasElement.width / 2, canvasElement.height / 2);
+            canvasCtx.fillText('Mueve tus manos frente a la cámara', canvasElement.width / 2, canvasElement.height / 2);
           }
           
           canvasCtx.restore();
         });
 
+        handsRef.current = hands;
+
         const camera = new Camera(videoElement, {
           onFrame: async () => {
-            await hands.send({ image: videoElement });
+            if (videoElement && handsRef.current) {
+              await handsRef.current.send({ image: videoElement });
+            }
           },
-          width: 640,
-          height: 480
+          width: 800,
+          height: 600
         });
         
         await camera.start();
         
-        // Establecer tamaño del canvas para que coincida con el video
-        canvasElement.width = 640;
-        canvasElement.height = 480;
+        setTimeout(() => {
+          if (canvasElement) {
+            canvasElement.width = 800;
+            canvasElement.height = 600;
+          }
+          if (captureCanvasElement) {
+            captureCanvasElement.width = 800;
+            captureCanvasElement.height = 600;
+          }
+        }, 100);
 
-        // Crear canvas oculto para captura
-        const cap = captureCanvasRef.current;
-        cap.width = 640;
-        cap.height = 480;
-
+        setIsMediaPipeInitialized(true);
+        
         return () => {
           camera.stop();
         };
@@ -110,14 +229,110 @@ export default function Dashboard({ onModelsUpdate }) {
       }
     };
 
-    initializeMediaPipe();
+    if (videoRef.current && canvasRef.current && captureCanvasRef.current) {
+      initializeMediaPipe();
+    } else {
+      setTimeout(() => {
+        if (videoRef.current && canvasRef.current && captureCanvasRef.current) {
+          initializeMediaPipe();
+        }
+      }, 100);
+    }
+
     fetchSamplesInfo();
   }, []);
 
-  // Capturar muestra
+  // Función para capturar frame
+  const captureFrame = () => {
+    try {
+      const cap = captureCanvasRef.current;
+      if (!cap) return null;
+
+      const ctx = cap.getContext('2d');
+      if (!ctx) return null;
+
+      ctx.clearRect(0, 0, cap.width, cap.height);
+      ctx.drawImage(videoRef.current, 0, 0, cap.width, cap.height);
+      
+      return new Promise((resolve) => {
+        cap.toBlob(resolve, 'image/jpeg', 0.9);
+      });
+    } catch (error) {
+      console.error('Error capturando frame:', error);
+      return null;
+    }
+  };
+
+  // Función para subir captura
+  const uploadCapture = async (blob, captureLabel) => {
+    try {
+      const fd = new FormData();
+      fd.append('label', captureLabel);
+      fd.append('file', blob, `frame_${Date.now()}.jpg`);
+      fd.append('hands_detected', handsDetected.toString());
+      fd.append('category', currentCategory);
+
+      await axios.post('http://127.0.0.1:8000/api/upload_sample', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      
+      return true;
+    } catch (error) {
+      console.error('Error subiendo captura:', error);
+      throw error;
+    }
+  };
+
+  // Iniciar grabación
+  const startRecording = async () => {
+    if (!isDetectingHand) {
+      setError('No se detectan manos. Por favor, coloca tus manos frente a la cámara.');
+      return;
+    }
+
+    setIsRecording(true);
+    setCapturesCount(0);
+    capturesQueueRef.current = [];
+    setRecordingLabel(label);
+
+    // Configurar intervalo de captura
+    recordingIntervalRef.current = setInterval(async () => {
+      if (isDetectingHand) {
+        const blob = await captureFrame();
+        if (blob) {
+          capturesQueueRef.current.push({
+            blob: blob,
+            label: recordingLabel,
+            timestamp: Date.now()
+          });
+          setCapturesCount(prev => prev + 1);
+        }
+      }
+    }, recordingInterval);
+
+    setSuccess(`Grabación iniciada para: ${recordingLabel}`);
+  };
+
+  // Detener grabación
+  const stopRecording = () => {
+    if (recordingIntervalRef.current) {
+      clearInterval(recordingIntervalRef.current);
+      recordingIntervalRef.current = null;
+    }
+    
+    setIsRecording(false);
+    setSuccess(`Grabación finalizada. Total de capturas: ${capturesCount}`);
+    
+    // Actualizar información de muestras después de un breve delay
+    setTimeout(() => {
+      fetchSamplesInfo();
+    }, 2000);
+  };
+
+  // Capturar muestra individual (mantenido por compatibilidad)
   const captureSample = async () => {
     if (!isDetectingHand) {
-      setError('No se detecta una mano. Por favor, coloca tu mano frente a la cámara.');
+      setError('No se detectan manos. Por favor, coloca tus manos frente a la cámara.');
       return;
     }
     
@@ -125,30 +340,22 @@ export default function Dashboard({ onModelsUpdate }) {
     setError(null);
     
     try {
-      const cap = captureCanvasRef.current;
-      const ctx = cap.getContext('2d');
-      ctx.drawImage(videoRef.current, 0, 0, cap.width, cap.height);
-      const blob = await new Promise(res => cap.toBlob(res, 'image/jpeg', 0.9));
+      const blob = await captureFrame();
+      if (!blob) {
+        throw new Error('No se pudo generar la imagen');
+      }
 
-      const fd = new FormData();
-      fd.append('label', label);
-      fd.append('file', blob, 'frame.jpg');
-
-      const res = await axios.post('https://backend-fastapi-3yov.onrender.com/api/upload_sample', fd, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      
-      setSuccess(res.data.message);
+      await uploadCapture(blob, label);
+      setSuccess(`Muestra capturada exitosamente para: ${label}`);
       fetchSamplesInfo();
       
-      // Efecto visual de captura exitosa
-      document.querySelector('.camera-container').classList.add('capture-flash');
-      setTimeout(() => {
-        document.querySelector('.camera-container').classList.remove('capture-flash');
-      }, 300);
+      const cameraFrame = document.querySelector('.camera-preview-large');
+      if (cameraFrame) {
+        cameraFrame.classList.add('capture-success');
+        setTimeout(() => cameraFrame.classList.remove('capture-success'), 500);
+      }
     } catch (err) {
       const errorMsg = err.response?.data?.detail || err.message;
-      console.error('Capture error:', errorMsg);
       setError('Error al capturar muestra: ' + errorMsg);
     } finally {
       setIsLoading(false);
@@ -158,7 +365,7 @@ export default function Dashboard({ onModelsUpdate }) {
   // Obtener información de muestras
   const fetchSamplesInfo = async () => {
     try {
-      const res = await axios.get('https://backend-fastapi-3yov.onrender.com/api/samples');
+      const res = await axios.get('http://127.0.0.1:8000/api/samples');
       setSamplesInfo(res.data);
     } catch (err) {
       console.error('Error fetching samples info:', err);
@@ -172,12 +379,11 @@ export default function Dashboard({ onModelsUpdate }) {
     }
     
     try {
-      const res = await axios.delete('https://backend-fastapi-3yov.onrender.com/api/clear_samples');
+      await axios.delete('http://127.0.0.1:8000/api/clear_samples');
       setSamplesInfo({});
-      setSuccess(res.data.message);
+      setSuccess('Todas las muestras han sido eliminadas');
     } catch (err) {
       const errorMsg = err.response?.data?.detail || err.message;
-      console.error('Clear samples error:', errorMsg);
       setError('Error al limpiar muestras: ' + errorMsg);
     }
   };
@@ -191,23 +397,40 @@ export default function Dashboard({ onModelsUpdate }) {
       const fd = new FormData();
       fd.append('name', modelName);
       
-      const res = await axios.post('https://backend-fastapi-3yov.onrender.com/api/train', fd);
-      setSuccess(res.data.message);
+      const res = await axios.post('http://127.0.0.1:8000/api/train', fd);
+      
+      setSuccess(`Modelo "${modelName}" entrenado exitosamente`);
       if (onModelsUpdate) onModelsUpdate();
       fetchModels();
     } catch (err) {
       const errorMsg = err.response?.data?.detail || err.message;
-      console.error('Training error:', errorMsg);
       setError('Error en entrenamiento: ' + errorMsg);
     } finally {
       setIsLoading(false);
     }
   };
 
+  // Eliminar modelo
+  const deleteModel = async (modelName) => {
+    if (!window.confirm(`¿Estás seguro de que quieres eliminar el modelo "${modelName}"?`)) {
+      return;
+    }
+
+    try {
+      // Necesitarías agregar este endpoint en tu backend
+      await axios.delete(`http://127.0.0.1:8000/api/model/${modelName}`);
+      setSuccess(`Modelo "${modelName}" eliminado exitosamente`);
+      fetchModels();
+    } catch (err) {
+      const errorMsg = err.response?.data?.detail || err.message;
+      setError('Error al eliminar modelo: ' + errorMsg);
+    }
+  };
+
   // Obtener modelos
   const fetchModels = useCallback(async () => {
     try {
-      const res = await axios.get('https://backend-fastapi-3yov.onrender.com/api/models');
+      const res = await axios.get('http://127.0.0.1:8000/api/models');
       setModels(res.data.models || []);
     } catch (err) {
       console.error('Error fetching models:', err);
@@ -215,7 +438,6 @@ export default function Dashboard({ onModelsUpdate }) {
     }
   }, []);
 
-  // Cargar modelos al montar el componente
   useEffect(() => {
     fetchModels();
   }, [fetchModels]);
@@ -223,7 +445,7 @@ export default function Dashboard({ onModelsUpdate }) {
   // Predecir con un modelo
   const predict = async (model) => {
     if (!isDetectingHand) {
-      setError('No se detecta una mano. Por favor, coloca tu mano frente a la cámara.');
+      setError('No se detectan manos. Por favor, coloca tus manos frente a la cámara.');
       return;
     }
     
@@ -231,346 +453,468 @@ export default function Dashboard({ onModelsUpdate }) {
     setError(null);
     
     try {
-      const cap = captureCanvasRef.current;
-      const ctx = cap.getContext('2d');
-      ctx.drawImage(videoRef.current, 0, 0, cap.width, cap.height);
-      const blob = await new Promise(res => cap.toBlob(res, 'image/jpeg', 0.9));
+      const blob = await captureFrame();
+      if (!blob) {
+        throw new Error('No se pudo generar la imagen');
+      }
 
       const fd = new FormData();
       fd.append('file', blob, 'frame.jpg');
       fd.append('model', model);
+      fd.append('hands_detected', handsDetected.toString());
 
-      const res = await axios.post('https://backend-fastapi-3yov.onrender.com/api/predict', fd, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+      const res = await axios.post('http://127.0.0.1:8000/api/predict', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' }
       });
-
       
       setPrediction(res.data.prediction);
       setConfidence(res.data.confidence);
       setAllPredictions(res.data.all_predictions);
-      setSuccess(res.data.message);
+      setSuccess(`Predicción realizada: ${res.data.prediction}`);
       setActiveTab('prediction');
     } catch (err) {
       const errorMsg = err.response?.data?.detail || err.message;
-      console.error('Prediction error:', errorMsg);
       setError('Error en predicción: ' + errorMsg);
     } finally {
       setIsLoading(false);
     }
   };
 
-  return (
-    <div className="dashboard-container">
-      {/* Header */}
-      <header className="dashboard-header">
-        <h1>👋 Sistema de Reconocimiento de Señas</h1>
-        <p className="header-subtitle">Interfaz para captura, entrenamiento y predicción de lenguaje de señas</p>
-      </header>
+  const updateHandDetectionSettings = (maxHands, complexity, detectionConfidence, trackingConfidence) => {
+    if (handsRef.current) {
+      handsRef.current.setOptions({
+        maxNumHands: maxHands,
+        modelComplexity: complexity,
+        minDetectionConfidence: detectionConfidence,
+        minTrackingConfidence: trackingConfidence
+      });
+    }
+  };
 
-      <div className="dashboard-content">
-        {/* Panel de cámara a la izquierda */}
-        <div className="camera-section">
-          <div className="camera-container">
-            <div className="camera-frame">
-              <video ref={videoRef} style={{ display: 'none' }}></video>
-              <canvas 
-                ref={canvasRef} 
-                className="camera-feed"
-              />
-              {isLoading && (
-                <div className="camera-overlay">
-                  <div className="spinner-border text-light" role="status">
-                    <span className="visually-hidden">Cargando...</span>
-                  </div>
-                </div>
-              )}
-              <div className="hand-status">
-                {isDetectingHand ? (
-                  <span className="hand-detected">{status}</span>
-                ) : (
-                  <span className="hand-not-detected">{status}</span>
-                )}
-              </div>
+  return (
+    <div className="dashboard">
+      {/* Sidebar */}
+      <aside className={`sidebar ${isSidebarOpen ? 'open' : 'closed'}`}>
+        <div className="sidebar-header">
+          <div className="logo-section">
+            <img src="/innova.png" alt="Innova Tec" className="logo" />
+            <div className="brand-text">
+              <h1>Innova Tec</h1>
+              <span>Vision&Señas-IA</span>
             </div>
-            <canvas ref={captureCanvasRef} style={{ display: 'none' }} />
+          </div>
+          <button className="sidebar-toggle" onClick={() => setIsSidebarOpen(!isSidebarOpen)}>
+            {isSidebarOpen ? '◀' : '▶'}
+          </button>
+        </div>
+
+        <nav className="sidebar-nav">
+          <button className={`nav-item ${activeTab === 'capture' ? 'active' : ''}`} onClick={() => setActiveTab('capture')}>
+            <span className="nav-icon">📷</span>
+            {isSidebarOpen && <span className="nav-text">Captura</span>}
+          </button>
+          <button className={`nav-item ${activeTab === 'training' ? 'active' : ''}`} onClick={() => setActiveTab('training')}>
+            <span className="nav-icon">🤖</span>
+            {isSidebarOpen && <span className="nav-text">Entrenamiento</span>}
+          </button>
+          <button className={`nav-item ${activeTab === 'prediction' ? 'active' : ''}`} onClick={() => setActiveTab('prediction')}>
+            <span className="nav-icon">🔍</span>
+            {isSidebarOpen && <span className="nav-text">Predicción</span>}
+          </button>
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="status-info">
+            <div className={`status-indicator ${isDetectingHand ? 'active' : ''}`}>
+              <div className="status-dot"></div>
+              {isSidebarOpen && (
+                <span className="status-text">
+                  {isDetectingHand ? `${handsDetected} mano(s) detectada(s)` : 'Esperando...'}
+                </span>
+              )}
+            </div>
+            {isRecording && isSidebarOpen && (
+              <div className="recording-status">
+                <div className="recording-dot"></div>
+                <span className="recording-text">Grabando: {capturesCount}</span>
+              </div>
+            )}
           </div>
         </div>
-        
-        {/* Panel de controles a la derecha */}
-        <div className="controls-section">
-          <div className="controls-container">
-            {/* Navegación por pestañas */}
-            <ul className="nav nav-tabs mb-3">
-              <li className="nav-item">
-                <button 
-                  className={`nav-link ${activeTab === 'capture' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('capture')}
-                >
-                  <i className="fas fa-camera me-2"></i>Captura
-                </button>
-              </li>
-              <li className="nav-item">
-                <button 
-                  className={`nav-link ${activeTab === 'training' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('training')}
-                >
-                  <i className="fas fa-brain me-2"></i>Entrenamiento
-                </button>
-              </li>
-              <li className="nav-item">
-                <button 
-                  className={`nav-link ${activeTab === 'prediction' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('prediction')}
-                >
-                  <i className="fas fa-search me-2"></i>Predicción
-                </button>
-              </li>
-            </ul>
+      </aside>
 
-            {/* Mensajes de estado */}
-            {error && (
-              <div className="alert alert-danger alert-dismissible fade show" role="alert">
-                <i className="fas fa-exclamation-circle me-2"></i>
-                {error}
-                <button type="button" className="btn-close" onClick={() => setError(null)}></button>
-              </div>
-            )}
-            
-            {success && (
-              <div className="alert alert-success alert-dismissible fade show" role="alert">
-                <i className="fas fa-check-circle me-2"></i>
-                {success}
-                <button type="button" className="btn-close" onClick={() => setSuccess(null)}></button>
-              </div>
-            )}
+      {/* Main Content */}
+      <main className="main-content">
+        <header className="content-header">
+          <div className="header-title">
+            <h2>
+              {activeTab === 'capture' && 'Captura de Datos'}
+              {activeTab === 'training' && 'Entrenamiento de Modelos'}
+              {activeTab === 'prediction' && 'Reconocimiento en Tiempo Real'}
+            </h2>
+            <p>
+              {activeTab === 'capture' && 'Captura muestras para entrenar el sistema'}
+              {activeTab === 'training' && 'Configura y entrena modelos de reconocimiento'}
+              {activeTab === 'prediction' && 'Realiza predicciones con modelos entrenados'}
+            </p>
+          </div>
+          
+          <div className="header-actions">
+            <div className="time-display">{new Date().toLocaleTimeString()}</div>
+          </div>
+        </header>
 
-            {/* Contenido de pestañas */}
-            <div className="tab-content">
-              {/* Pestaña de Captura */}
-              {activeTab === 'capture' && (
-                <div className="tab-pane fade show active">
-                  <div className="control-card">
-                    <h5><i className="fas fa-hand-point-up me-2"></i>Capturar Muestra</h5>
-                    
-                    <div className="mb-3">
-                      <label className="form-label">Selecciona la letra</label>
-                      <div className="vowel-buttons">
-                        {['A', 'E', 'I', 'O', 'U'].map(vowel => (
+        {/* Messages */}
+        <div className="messages-container">
+          {error && (
+            <div className="message error">
+              <span>⚠️ {error}</span>
+              <button onClick={() => setError(null)}>×</button>
+            </div>
+          )}
+          
+          {success && (
+            <div className="message success">
+              <span>✅ {success}</span>
+              <button onClick={() => setSuccess(null)}>×</button>
+            </div>
+          )}
+        </div>
+
+        {/* Content Area */}
+        <div className="content-area">
+          {/* Sección principal con cámara grande */}
+          <div className="main-section">
+            <div className="camera-container">
+              <div className="camera-header">
+                <h3>Vista de la Cámara</h3>
+                <div className="camera-controls">
+                  <button className="control-btn" onClick={() => updateHandDetectionSettings(2, 1, 0.5, 0.5)} title="Modo dos manos">
+                    👐 Standard
+                  </button>
+                  <button className="control-btn" onClick={() => updateHandDetectionSettings(1, 1, 0.7, 0.7)} title="Modo una mano">
+                    👆 Preciso
+                  </button>
+                </div>
+              </div>
+              
+              <div className="camera-preview-large">
+                <video ref={videoRef} style={{ display: 'none' }} playsInline></video>
+                <canvas ref={canvasRef} className="camera-feed-large" width="800" height="600" />
+                <canvas ref={captureCanvasRef} style={{ display: 'none' }} width="800" height="600" />
+                {isLoading && (
+                  <div className="camera-overlay">
+                    <div className="spinner"></div>
+                    <span>Procesando...</span>
+                  </div>
+                )}
+                {isRecording && (
+                  <div className="recording-overlay">
+                    <div className="recording-indicator"></div>
+                    <span>GRABANDO - {capturesCount} capturas</span>
+                  </div>
+                )}
+              </div>
+              
+              <div className="camera-info">
+                <div className="info-grid">
+                  <div className="info-item">
+                    <span className="info-label">Resolución:</span>
+                    <span className="info-value">800×600 px</span>
+                  </div>
+                  <div className="info-item">
+                    <span className="info-label">Estado:</span>
+                    <span className={`info-value ${isDetectingHand ? 'active' : 'inactive'}`}>
+                      {isDetectingHand ? '● Activo' : '○ Inactivo'}
+                    </span>
+                  </div>
+                  <div className="info-item">
+                    <span className="info-label">Manos detectadas:</span>
+                    <span className="info-value">{handsDetected}</span>
+                  </div>
+                  <div className="info-item">
+                    <span className="info-label">Modo:</span>
+                    <span className="info-value">{isRecording ? '🔴 Grabación' : 'MediaPipe Hands'}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Panel de controles a la derecha */}
+          <div className="controls-panel">
+            {/* Capture Tab */}
+            {activeTab === 'capture' && (
+              <div className="tab-content active">
+                <div className="control-card">
+                  <div className="card-section">
+                    <h4>Selección de Categoría</h4>
+                    <div className="category-selector">
+                      {Object.entries(categories).map(([key, category]) => (
+                        <button
+                          key={key}
+                          className={`category-btn ${currentCategory === key ? 'active' : ''}`}
+                          onClick={() => {
+                            setCurrentCategory(key);
+                            setLabel(category.symbols[0]);
+                            setRecordingLabel(category.symbols[0]);
+                          }}
+                          style={{ borderColor: currentCategory === key ? category.color : 'transparent' }}
+                        >
+                          <span className="category-icon">{category.icon}</span>
+                          <span className="category-name">{category.name}</span>
+                          <span className="category-count">{category.symbols.length}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="card-section">
+                    <h4>Símbolo a Capturar</h4>
+                    <div className="symbol-selector">
+                      <div className="current-symbol-display">
+                        <span className="symbol">{label}</span>
+                        <span className="symbol-label">Símbolo actual</span>
+                      </div>
+                      <div className="symbol-grid">
+                        {categories[currentCategory].symbols.map(symbol => (
                           <button
-                            key={vowel}
-                            className={`vowel-btn ${label === vowel ? 'active' : ''}`}
-                            onClick={() => setLabel(vowel)}
+                            key={symbol}
+                            className={`symbol-btn ${label === symbol ? 'active' : ''}`}
+                            onClick={() => {
+                              setLabel(symbol);
+                              setRecordingLabel(symbol);
+                            }}
                           >
-                            {vowel}
+                            {symbol}
                           </button>
                         ))}
                       </div>
                     </div>
+                  </div>
 
-                    <button 
-                      className="btn btn-primary w-100 capture-btn" 
-                      onClick={captureSample}
-                      disabled={isLoading || !isDetectingHand}
-                    >
-                      {isLoading ? (
-                        <>
-                          <span className="spinner-border spinner-border-sm me-2" role="status"></span>
-                          Capturando...
-                        </>
-                      ) : (
-                        <>
-                          <i className="fas fa-camera me-2"></i>
-                          Capturar muestra
-                        </>
-                      )}
-                    </button>
-                    
-                    <div className="samples-info">
-                      <h6>Muestras recogidas</h6>
-                      <div className="total-samples">
-                        <span className="number">{samplesInfo.total_samples || 0}</span>
-                        <span className="label">muestras totales</span>
+                  {/* Controles de Grabación */}
+                  <div className="card-section">
+                    <h4>Grabación Automática</h4>
+                    <div className="recording-controls">
+                      <div className="interval-selector">
+                        <label>Intervalo entre capturas:</label>
+                        <select 
+                          value={recordingInterval} 
+                          onChange={(e) => setRecordingInterval(Number(e.target.value))}
+                          disabled={isRecording}
+                        >
+                          <option value={500}>0.5 segundos</option>
+                          <option value={1000}>1 segundo</option>
+                          <option value={2000}>2 segundos</option>
+                          <option value={3000}>3 segundos</option>
+                        </select>
                       </div>
                       
-                      {samplesInfo.samples_per_class && (
-                        <div className="samples-by-class">
-                          {Object.entries(samplesInfo.samples_per_class).map(([label, count]) => (
-                            <div key={label} className="sample-class">
-                              <span className="class-label">{label}</span>
-                              <div className="progress">
-                                <div 
-                                  className="progress-bar" 
-                                  style={{ 
-                                    width: `${(count / samplesInfo.total_samples) * 100}%`,
-                                    backgroundColor: `hsl(${label.charCodeAt(0) * 10}, 70%, 50%)`
-                                  }}
-                                ></div>
-                              </div>
-                              <span className="class-count">{count}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    
-                    <button 
-                      className="btn btn-outline-danger btn-sm w-100 mt-2" 
-                      onClick={clearSamples}
-                      disabled={isLoading || !samplesInfo.total_samples}
-                    >
-                      <i className="fas fa-trash me-2"></i>
-                      Limpiar todas las muestras
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Pestaña de Entrenamiento */}
-              {activeTab === 'training' && (
-                <div className="tab-pane fade show active">
-                  <div className="control-card">
-                    <h5><i className="fas fa-brain me-2"></i>Entrenar Modelo</h5>
-                    
-                    <div className="mb-3">
-                      <label className="form-label">Nombre del modelo</label>
-                      <input 
-                        className="form-control dark-input" 
-                        value={modelName} 
-                        onChange={e => setModelName(e.target.value)}
-                        disabled={isLoading}
-                        placeholder="Ej: mi_modelo_v1"
-                      />
-                    </div>
-                    
-                    <button 
-                      className="btn btn-success w-100 train-btn" 
-                      onClick={trainModel}
-                      disabled={isLoading || !samplesInfo.total_samples}
-                      title={!samplesInfo.total_samples ? "Primero captura algunas muestras" : ""}
-                    >
-                      {isLoading ? (
-                        <>
-                          <span className="spinner-border spinner-border-sm me-2" role="status"></span>
-                          Entrenando...
-                        </>
+                      {!isRecording ? (
+                        <button 
+                          className="primary-btn record-btn"
+                          onClick={startRecording}
+                          disabled={!isDetectingHand}
+                        >
+                          <span>🔴</span>
+                          Iniciar Grabación
+                        </button>
                       ) : (
-                        <>
-                          <i className="fas fa-robot me-2"></i>
-                          Entrenar y Guardar Modelo
-                        </>
+                        <button 
+                          className="secondary-btn stop-btn"
+                          onClick={stopRecording}
+                        >
+                          <span>⏹️</span>
+                          Detener Grabación ({capturesCount})
+                        </button>
                       )}
-                    </button>
-                    
-                    <div className="models-list mt-3">
-                      <h6>Modelos disponibles</h6>
-                      <button 
-                        className="btn btn-outline-info btn-sm w-100 mb-2" 
-                        onClick={fetchModels}
-                        disabled={isLoading}
-                      >
-                        <i className="fas fa-sync-alt me-2"></i>
-                        Actualizar lista
-                      </button>
-                      
-                      <div className="model-cards">
-                        {models.length > 0 ? (
-                          models.map(m => (
-                            <div key={m.name} className="model-card">
-                              <div className="model-info">
-                                <div className="model-name">{m.name}</div>
-                                <div className="model-stats">
-                                  <span className="accuracy">{(m.accuracy * 100).toFixed(1)}%</span>
-                                  <span className="samples">{m.n_samples} muestras</span>
-                                </div>
-                              </div>
-                              <button 
-                                className="btn btn-sm btn-outline-primary"
-                                onClick={() => predict(m.name)}
-                                disabled={isLoading}
-                              >
-                                Probar
-                              </button>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="empty-models">
-                            <i className="fas fa-exclamation-circle"></i>
-                            <p>No hay modelos disponibles</p>
-                          </div>
-                        )}
-                      </div>
                     </div>
                   </div>
-                </div>
-              )}
 
-              {/* Pestaña de Predicción */}
-              {activeTab === 'prediction' && (
-                <div className="tab-pane fade show active">
-                  <div className="control-card">
-                    <h5><i className="fas fa-search me-2"></i>Resultado de Predicción</h5>
+                  {/* Captura individual (mantenido) */}
+                  <button 
+                    className="secondary-btn capture-single-btn"
+                    onClick={captureSample}
+                    disabled={isLoading || !isDetectingHand || isRecording}
+                  >
+                    <span>📸</span>
+                    Captura Individual
+                  </button>
+
+                  <div className="card-section">
+                    <div className="stats-header">
+                      <h4>Estadísticas del Dataset</h4>
+                      <div className="total-count">{samplesInfo.total_samples || 0} muestras</div>
+                    </div>
                     
-                    {prediction ? (
-                      <>
-                        <div className="prediction-result">
-                          <div className="main-prediction">
-                            <div className="predicted-letter">{prediction}</div>
-                            <div className="confidence">
-                              <div className="confidence-value">{(confidence * 100).toFixed(1)}%</div>
-                              <div className="confidence-label">de confianza</div>
+                    {samplesInfo.samples_per_class && (
+                      <div className="samples-distribution">
+                        {Object.entries(samplesInfo.samples_per_class).slice(0, 6).map(([symbol, count]) => (
+                          <div key={symbol} className="distribution-item">
+                            <span className="symbol-label">{symbol}</span>
+                            <div className="progress-bar">
+                              <div className="progress-fill" style={{ width: `${(count / (samplesInfo.total_samples || 1)) * 100}%` }}></div>
                             </div>
+                            <span className="sample-count">{count}</span>
                           </div>
-                          
-                          <div className="other-predictions">
-                            <h6>Otras posibles letras:</h6>
-                            {allPredictions.slice(1, 4).map(([letter, prob], index) => (
-                              <div key={index} className="alternative-prediction">
-                                <span className="alt-letter">{letter}</span>
-                                <div className="alt-probability">
-                                  <div 
-                                    className="alt-probability-bar"
-                                    style={{ width: `${prob * 100}%` }}
-                                  ></div>
-                                  <span className="alt-percentage">{(prob * 100).toFixed(1)}%</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                        
-                        <button 
-                          className="btn btn-info w-100 mt-3"
-                          onClick={() => setActiveTab('training')}
-                        >
-                          <i className="fas fa-brain me-2"></i>
-                          Probar otro modelo
-                        </button>
-                      </>
-                    ) : (
-                      <div className="no-prediction">
-                        <i className="fas fa-hand-point-right"></i>
-                        <p>Realiza una predicción primero</p>
-                        <button 
-                          className="btn btn-primary mt-2"
-                          onClick={() => setActiveTab('training')}
-                        >
-                          Ir a modelos
-                        </button>
+                        ))}
                       </div>
                     )}
                   </div>
+
+                  <button 
+                    className="danger-btn clear-btn"
+                    onClick={clearSamples}
+                    disabled={isLoading || !samplesInfo.total_samples}
+                  >
+                    🗑️ Limpiar Dataset
+                  </button>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
+
+            {/* Training Tab */}
+            {activeTab === 'training' && (
+              <div className="tab-content active">
+                <div className="control-card">
+                  <div className="card-section">
+                    <h4>Configuración del Modelo</h4>
+                    <div className="model-config">
+                      <label>Nombre del modelo:</label>
+                      <div className="input-group">
+                        <input 
+                          type="text"
+                          value={modelName}
+                          onChange={(e) => setModelName(e.target.value)}
+                          placeholder="nombre_del_modelo"
+                          disabled={isLoading}
+                        />
+                        <span className="input-suffix">.model</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button 
+                    className="primary-btn train-btn"
+                    onClick={trainModel}
+                    disabled={isLoading || !samplesInfo.total_samples}
+                  >
+                    {isLoading ? (
+                      <>
+                        <div className="btn-spinner"></div>
+                        Entrenando...
+                      </>
+                    ) : (
+                      <>
+                        <span>🚀</span>
+                        Iniciar Entrenamiento
+                      </>
+                    )}
+                  </button>
+
+                  <div className="card-section">
+                    <div className="models-header">
+                      <h4>Modelos Entrenados</h4>
+                      <button className="refresh-btn" onClick={fetchModels} disabled={isLoading}>
+                        🔄 Actualizar
+                      </button>
+                    </div>
+                    
+                    <div className="models-list">
+                      {models.length > 0 ? (
+                        models.map(model => (
+                          <div key={model.name} className="model-card">
+                            <div className="model-info">
+                              <h5>{model.name}</h5>
+                              <div className="model-stats">
+                                <span className="accuracy">Precisión: {(model.accuracy * 100).toFixed(1)}%</span>
+                                <span className="samples">{model.n_samples} muestras</span>
+                              </div>
+                              <div className="model-classes">
+                                {model.classes && model.classes.slice(0, 3).map(cls => (
+                                  <span key={cls} className="class-tag">{cls}</span>
+                                ))}
+                                {model.classes && model.classes.length > 3 && (
+                                  <span className="class-more">+{model.classes.length - 3} más</span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="model-actions">
+                              <button className="test-btn" onClick={() => predict(model.name)} disabled={isLoading}>
+                                Probar
+                              </button>
+                              <button className="delete-btn" onClick={() => deleteModel(model.name)} disabled={isLoading}>
+                                🗑️
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="empty-models">
+                          <span>🤖</span>
+                          <p>No hay modelos disponibles</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Prediction Tab */}
+            {activeTab === 'prediction' && (
+              <div className="tab-content active">
+                <div className="control-card">
+                  {prediction ? (
+                    <>
+                      <div className="prediction-result">
+                        <div className="prediction-header">
+                          <h4>Resultado del Reconocimiento</h4>
+                          <span className="confidence-badge">{(confidence * 100).toFixed(1)}% de confianza</span>
+                        </div>
+                        
+                        <div className="prediction-display">
+                          <div className="predicted-symbol">{prediction}</div>
+                          <div className="confidence-meter">
+                            <div className="meter-fill" style={{ width: `${confidence * 100}%` }}></div>
+                          </div>
+                        </div>
+
+                        <div className="alternative-predictions">
+                          <h5>Otras posibilidades:</h5>
+                          {allPredictions.slice(0, 5).map(([symbol, prob], index) => (
+                            <div key={index} className="alt-prediction">
+                              <span className="alt-symbol">{symbol}</span>
+                              <div className="alt-prob">
+                                <div className="alt-prob-bar" style={{ width: `${prob * 100}%` }}></div>
+                                <span className="alt-percent">{(prob * 100).toFixed(1)}%</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <button className="primary-btn" onClick={() => setActiveTab('training')}>
+                        🔄 Realizar otra prueba
+                      </button>
+                    </>
+                  ) : (
+                    <div className="prediction-placeholder">
+                      <div className="placeholder-icon">👋</div>
+                      <h4>Listo para reconocer</h4>
+                      <p>Selecciona un modelo y realiza una prueba de reconocimiento</p>
+                      <button className="primary-btn" onClick={() => setActiveTab('training')}>
+                        🤖 Ir a modelos
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
-      </div>
-
-      {/* Footer */}
-      <footer className="dashboard-footer">
-        <p>Sistema de Reconocimiento de Señas - {new Date().getFullYear()}</p>
-      </footer>
-
+      </main>
     </div>
   );
 }
